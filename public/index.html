@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyAPI Hub · 渠道看板</title>
+<style>
+  :root {
+    --bg: #0c0d10;
+    --panel: #15171c;
+    --panel-2: #1b1e25;
+    --line: #262a33;
+    --text: #e8eaef;
+    --muted: #8b93a4;
+    --ok: #35d07f;
+    --warn: #f2b544;
+    --bad: #ef5b5b;
+    --accent: #6aa6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 32px 60px;
+    background: radial-gradient(1200px 600px at 20% -10%, #1a2233 0%, var(--bg) 55%);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  h2 { font-size: 15px; color: var(--muted); font-weight: 500; margin: 28px 0 12px; }
+  .spacer { flex: 1; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .dot.on { background: var(--ok); }
+  .muted { color: var(--muted); }
+  input, button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 11px;
+  }
+  input::placeholder { color: #5d6472; }
+  button { cursor: pointer; transition: border-color .15s, background .15s; }
+  button:hover { border-color: var(--accent); }
+  button.primary { border-color: #2f4d7a; background: #1b2b45; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel) 0%, #121419 100%);
+    border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
+  }
+  .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .card-head strong { font-size: 15px; }
+  .tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .tag.ok { color: var(--ok); border-color: #1f4632; background: #10231a; }
+  .tag.bad { color: var(--bad); border-color: #4a2222; background: #241012; }
+  .kv { display: grid; grid-template-columns: 92px 1fr; gap: 4px 10px; font-size: 12.5px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  td.result { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .empty { color: var(--muted); padding: 18px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MyAPI Hub</h1>
+  <span id="dot" class="dot"></span>
+  <span id="summary" class="muted">未连接</span>
+  <div class="spacer"></div>
+  <input id="key" type="password" placeholder="API Key" autocomplete="off">
+  <button onclick="saveKey()">保存</button>
+  <button class="primary" onclick="reloadConfig()">重载配置</button>
+</header>
+
+<div class="grid" id="channels"></div>
+
+<h2>定时任务（签到 / 保活 / 活动领取）</h2>
+<table>
+  <thead><tr><th>任务</th><th>调度</th><th>上次</th><th>下次</th><th>结果</th><th></th></tr></thead>
+  <tbody id="tasks"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+</table>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let status = null;
+
+function key() { return localStorage.getItem('myapi.key') || ''; }
+function saveKey() {
+  localStorage.setItem('myapi.key', $('key').value.trim());
+  refresh();
+}
+$('key').value = key();
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key(), ...(options.headers || {}) },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error?.message || ('HTTP ' + res.status));
+  return body;
+}
+
+function fmtTime(ms) {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+
+function pill(ok, textOk, textBad) {
+  const s = document.createElement('span');
+  s.className = 'tag ' + (ok ? 'ok' : 'bad');
+  s.textContent = ok ? textOk : textBad;
+  return s;
+}
+
+function renderChannels(channels) {
+  const root = $('channels');
+  root.textContent = '';
+  if (!channels.length) {
+    root.innerHTML = '<div class="empty">没有渠道，请检查 channels.json</div>';
+    return;
+  }
+  for (const ch of channels) {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const name = document.createElement('strong');
+    name.textContent = ch.name;
+    head.append(name, pill(ch.available, ch.enabled ? '可用' : '已停用', ch.enabled ? '冷却/异常' : '已停用'));
+    if (ch.cooldownMs > 0) {
+      const cool = document.createElement('span');
+      cool.className = 'tag';
+      cool.textContent = '冷却 ' + Math.round(ch.cooldownMs / 1000) + 's';
+      head.append(cool);
+    }
+    card.append(head);
+
+    const kv = document.createElement('div');
+    kv.className = 'kv';
+    const rows = [
+      ['模型', ch.models + ' 个'],
+      ['权重', String(ch.weight)],
+      ['优先级', String(ch.priority)],
+      ['延迟', ch.latencyMs == null ? '—' : ch.latencyMs + ' ms'],
+      ['请求', ch.stats.requests + ' / 成功 ' + ch.stats.success + ' / 失败 ' + ch.stats.failed],
+      ['最近错误', ch.lastError || '—'],
+      ['上游', ch.baseUrl],
+    ];
+    for (const [k, v] of rows) {
+      const kd = document.createElement('div'); kd.className = 'k'; kd.textContent = k;
+      const vd = document.createElement('div'); vd.className = 'v'; vd.textContent = v; vd.title = v;
+      kv.append(kd, vd);
+    }
+    card.append(kv);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const minus = document.createElement('button');
+    minus.textContent = '权重 -1';
+    minus.onclick = () => setWeight(ch.id, ch.weight - 1);
+    const plus = document.createElement('button');
+    plus.textContent = '权重 +1';
+    plus.onclick = () => setWeight(ch.id, ch.weight + 1);
+    const toggle = document.createElement('button');
+    toggle.textContent = ch.enabled ? '停用' : '启用';
+    toggle.onclick = () => toggleChannel(ch.id);
+    actions.append(minus, plus, toggle);
+    card.append(actions);
+
+    root.append(card);
+  }
+}
+
+function renderTasks(tasks) {
+  const body = $('tasks');
+  body.textContent = '';
+  if (!tasks.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6; td.className = 'empty';
+    td.textContent = '暂无任务。在 channels.json 的 channels[].tasks 中注册，例如每日 09:10 签到。';
+    tr.append(td); body.append(tr);
+    return;
+  }
+  for (const t of tasks) {
+    const tr = document.createElement('tr');
+    const cells = [
+      t.channel + ' · ' + t.name,
+      t.at ? ('每天 ' + t.at) : (t.every ? ('每 ' + t.every) : '手动'),
+      fmtTime(t.lastRunAt),
+      t.running ? '执行中…' : fmtTime(t.nextRunAt),
+    ];
+    for (const text of cells) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.append(td);
+    }
+    const stateTd = document.createElement('td');
+    const ok = t.lastStatus === 'ok';
+    stateTd.append(pill(Boolean(t.lastStatus) && ok, '成功', t.lastStatus || '未运行'));
+    const resultTd = document.createElement('td');
+    resultTd.className = 'result';
+    resultTd.textContent = t.lastResult || '—';
+    resultTd.title = t.lastResult || '';
+    stateTd.append(resultTd);
+    tr.append(stateTd);
+
+    const actionTd = document.createElement('td');
+    const run = document.createElement('button');
+    run.textContent = '立即执行';
+    run.onclick = async () => {
+      run.disabled = true;
+      try {
+        await api('/admin/tasks/' + encodeURIComponent(t.channel) + '/' + encodeURIComponent(t.id) + '/run', { method: 'POST', body: '{}' });
+      } catch (e) {
+        alert(e.message);
+      }
+      run.disabled = false;
+      refresh();
+    };
+    actionTd.append(run);
+    tr.append(actionTd);
+    body.append(tr);
+  }
+}
+
+async function setWeight(id, weight) {
+  if (weight <= 0) return;
+  try {
+    await api('/admin/channels/' + encodeURIComponent(id) + '/weight', { method: 'POST', body: JSON.stringify({ weight }) });
+    refresh();
+  } catch (e) { alert(e.message); }
+}
+
+async function toggleChannel(id) {
+  try {
+    await api('/admin/channels/' + encodeURIComponent(id) + '/toggle', { method: 'POST', body: '{}' });
+    refresh();
+  } catch (e) { alert(e.message); }
+}
+
+async function reloadConfig() {
+  try {
+    const r = await api('/admin/reload', { method: 'POST', body: '{}' });
+    $('summary').textContent = '已重载 · ' + r.channels + ' 渠道 / ' + r.models + ' 模型';
+    refresh();
+  } catch (e) { alert(e.message); }
+}
+
+async function refresh() {
+  try {
+    status = await api('/admin/status');
+    $('dot').className = 'dot on';
+    $('summary').textContent = '运行 ' + status.uptimeSec + 's · 模型 ' + status.router.modelCount +
+      ' · 策略 ' + status.router.strategy + ' · 渠道 ' + status.router.channels.length;
+    renderChannels(status.router.channels);
+    renderTasks(status.tasks);
+  } catch (e) {
+    $('dot').className = 'dot';
+    $('summary').textContent = '连接失败：' + e.message;
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.git
+.gitignore
+data
+channels.json
+node_modules
+test
+README.md
+*.log
+.DS_Store

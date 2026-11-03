@@ -1,0 +1,24 @@
+{
+  "name": "myapi-hub",
+  "version": "0.1.0",
+  "description": "Plugin-based OpenAI-compatible gateway: aggregate multiple upstream gateways behind one /v1 endpoint with load balancing, health checks and scheduled tasks.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "bin": {
+    "myapi-hub": "src/index.js"
+  },
+  "files": [
+    "src",
+    "plugins",
+    "public",
+    "channels.example.json"
+  ]
+}
